@@ -1,3 +1,5 @@
+**To view this analysis in full, please visit: https://b-rengel.github.io/summer_school_qed_did/**
+
 # Summer School QED Analysis (Synthetic Example)
 
 **Author:** Bek Rengel  
@@ -188,4 +190,5 @@ The DiD design assumes that, in the absence of the intervention, the outcomes fo
 - visually inspects changes over time.
 
 **Proportional Odds (Ordinal Regression)**
+
 Ordinal logistic regression assumes proportional odds, meaning that the effects of predictors are constant across thresholds of the ordinal outcome. This assumption is not formally tested in this example, and the model is used as a practical approximation for Likert-type items.
