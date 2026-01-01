@@ -1,0 +1,426 @@
+---
+title: "Summer School QED Analysis"
+author: "Bek Rengel"
+date: "2025-04-07"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: readable
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+# OVERVIEW
+This notebook demonstrates the workflow used to evaluate the **Access to UWE Summer School**, as part of UWE's Access and Participation Plan. This study used a quasi-experimental, Difference-in-Difference (DiD) design with two survey items (Q8, Q9) showing significant survey_stage x treatment effects in an ordinal logistic regression, with Q5 showing near-significance. 
+
+> This notebook uses **synthetic data**: The dataset used below is randomly generated to reproduce **patterns** observed during the analysis rather than original values. This is to comply with GDPR and ethical requirements of this research, ensuring the data contains no personal or identifiable information.
+
+For more information on this study, please see the README documents. To read evaluation reports, please visit [UWE Bristol's Access and Participation Plan Pages.](https://www.uwe.ac.uk/about/values-vision-strategy/equality-diversity-and-inclusivity/policies#a7060a79c-a095-4fac-b16d-bd2e100068a9) You will find reports relating to this evaluation listed under the 'Widening Access and Raising Attainment' section. Please note some reports are forthcoming in 2026. 
+
+
+**Copyright notice** © University of the West of England, Bristol (UWE Bristol), April 2025. Original author: Bek Rengel. All rights reserved.
+
+# Packages
+```{r packages}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(MASS)
+library(purrr)
+```
+
+# Synthetic data generation
+The generator below creates:
+
+- A **long** dataset dfDID with 'id' (unique identifier for each synthetic participant), 'survey_stage' (pre or post-activity survey), 'treatment' (comparison group CG or intervention group IG), survey items Q1-Q10 (Likert 1-5).
+- A **wide** dataset 'dfWide' with 'id' (as above), 'treatment' (as above), pre-survey questions (e.g. 'Pre_Q1), post-survey questions (e.g. 'Post_Q1') and difference scores calculated as Post - Pre (e.g. 'Diff_Q1').
+
+
+I simulate Likert responses via a latent normal variable with fixed thresholds. The **DiD effect** appears **only** for the two survey items that showed significance (Q8, Q9), with optional near significance for Q5. You can tune significance by adjusting:
+- `did_effect["Q8"]`, `did_effect["Q9"]`, `did_effect["Q5"]`
+- residual noise `eps_sd`
+
+```{r synthetic-data}
+set.seed(2718) 
+
+# DESIGN
+n_IG <- 22
+n_CG <- 50
+
+ids_IG <- paste0("IG", seq_len(n_IG))  # IG1..IG22
+ids_CG <- paste0("CG", seq_len(n_CG))  # CG1..CG50
+
+design <- tidyr::expand_grid(
+  id           = c(ids_IG, ids_CG),
+  survey_stage = c("Pre","Post")
+) %>%
+  mutate(
+    Treatment    = ifelse(grepl("^IG", id), "IG", "CG"),
+    Treatment    = factor(Treatment, levels = c("CG","IG")),
+    survey_stage = factor(survey_stage, levels = c("Pre","Post"))
+  )
+
+items <- paste0("Q", 1:10)
+
+# THRESHOLDS FOR LIKERT
+cuts <- c(-1.50, -0.50, 0.50, 1.50)
+
+# BASELINE MEANS
+mu_base <- rnorm(10, mean = 0, sd = 0.30)
+
+# EFFECT SIZES
+time_shift <- 0.10
+did_effect <- setNames(rep(0, 10), items)
+did_effect["Q8"] <- 1.80   # strong effect
+did_effect["Q9"] <- 1.20   # medium effect
+did_effect["Q5"] <- 0.60   # optional near-sig
+
+eps_sd <- 0.65  # noise level
+
+# GENERATOR
+gen_item <- function(df, j) {
+  itm <- items[j]
+  mu <- mu_base[j] +
+        ifelse(df$survey_stage == "Post", time_shift, 0) +
+        ifelse(df$survey_stage == "Post" & df$Treatment == "IG", did_effect[itm], 0)
+  z <- mu + rnorm(nrow(df), 0, eps_sd)
+  y <- cut(z, breaks = c(-Inf, cuts, Inf), labels = FALSE)
+  df[[itm]] <- y
+  df
+}
+
+dfDID <- purrr::reduce(seq_along(items), function(acc, j) gen_item(acc, j), .init = design)
+
+# SET REFERENCES
+dfDID$survey_stage <- relevel(dfDID$survey_stage, ref = "Pre")
+dfDID$Treatment    <- relevel(dfDID$Treatment, ref = "CG")
+
+# WIDE FORMAT
+dfWide <- dfDID %>%
+  pivot_wider(
+    names_from  = survey_stage,
+    values_from = all_of(items),
+    names_glue  = "{.value}_{survey_stage}"
+  )
+
+dfWide <- dfWide %>%
+  mutate(
+    Treatment = factor(ifelse(grepl("^IG", id), "IG", "CG"), levels = c("CG","IG")),
+    across(all_of(paste0(items, "_Pre")),  as.numeric),
+    across(all_of(paste0(items, "_Post")), as.numeric)
+  )
+
+for (itm in items) {
+  post_col <- paste0(itm, "_Post")
+  pre_col  <- paste0(itm, "_Pre")
+  diff_col <- paste0("DIFF_", itm)
+  dfWide[[diff_col]] <- dfWide[[post_col]] - dfWide[[pre_col]]
+}
+
+dfWide <- dfWide %>%
+  rename_with(~ paste0("PRE_",  sub("_Pre$",  "", .x)),  ends_with("_Pre"))  %>%
+  rename_with(~ paste0("POST_", sub("_Post$", "", .x)),  ends_with("_Post")) %>%
+  relocate(id, Treatment)
+
+str(dfDID)
+str(dfWide)
+```
+
+---
+
+# Descriptive statistics
+Descriptive statistics (count, mean, sd) for each study group (IG, CG) are computed below. These are synthetic sense-checks and values are illustrative only.
+
+To see actual results of the study, please see the link to the evaluation reports in the 'Overview' section. 
+
+```{r descriptives}
+dfIG <- dfWide %>% filter(Treatment == "IG")
+dfCG <- dfWide %>% filter(Treatment == "CG")
+
+# IG
+IG_desc <- dfIG %>%
+  dplyr::select(starts_with("PRE_"), starts_with("POST_"), starts_with("DIFF_")) %>%
+  summarise(across(everything(),
+                   list(
+                     mean = ~mean(.x, na.rm = TRUE),
+                     sd = ~sd(.x, na.rm = TRUE),
+                     n = ~sum(!is.na(.x))),
+                   .names = "{.col}_{.fn}"))
+IG_desc <- IG_desc %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Stage", "Question", "Stat"),
+    names_sep = "_",
+    values_to = "Value"
+  ) 
+IG_desc
+
+# CG
+CG_desc <- dfCG %>%
+  dplyr::select(starts_with("PRE_"), starts_with("POST_"), starts_with("DIFF_")) %>%
+  summarise(
+    across(
+      everything(),
+      list(mean = ~mean(.x, na.rm = TRUE),
+           sd   = ~sd(.x, na.rm = TRUE),
+           n    = ~sum(!is.na(.x)))
+    ))
+
+CG_desc <- CG_desc %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Stage", "Question", "Stat"),
+    names_sep = "_",
+    values_to = "Value"
+  ) 
+CG_desc
+```
+
+---
+
+# Statistical analyses: Wilcoxon & Mann–Whitney
+
+Below are outlined examples of the process undertaken to check for significant differences between groups (IG vs CG) and within groups (CG pre vs CG post, IG pre vs IG post). Not all questions are listed for brevity and values presented are synthetic and illustrative only.
+
+To see actual results of the study, please see the link to the evaluation reports in the 'Overview' section. 
+
+
+```{r wilcoxon-mwu}
+# Within-group (paired) examples
+wilcox.test(dfIG$PRE_Q1,  dfIG$POST_Q1,  paired = TRUE, exact = FALSE)
+wilcox.test(dfIG$PRE_Q4,  dfIG$POST_Q4,  paired = TRUE, exact = FALSE)
+wilcox.test(dfIG$PRE_Q8,  dfIG$POST_Q8,  paired = TRUE, exact = FALSE)
+
+wilcox.test(dfCG$PRE_Q1,  dfCG$POST_Q1,  paired = TRUE, exact = FALSE)
+wilcox.test(dfCG$PRE_Q4,  dfCG$POST_Q4,  paired = TRUE, exact = FALSE)
+wilcox.test(dfCG$PRE_Q8,  dfCG$POST_Q8,  paired = TRUE, exact = FALSE)
+
+# Between-group (unpaired) examples
+wilcox.test(dfWide$PRE_Q1[dfWide$Treatment == "IG"],  dfWide$PRE_Q1[dfWide$Treatment == "CG"],
+            paired = FALSE, exact = FALSE, correct = FALSE)
+
+wilcox.test(dfWide$POST_Q4[dfWide$Treatment == "IG"],  dfWide$POST_Q4[dfWide$Treatment == "CG"],
+            paired = FALSE, exact = FALSE, correct = FALSE)
+
+wilcox.test(dfWide$DIFF_Q8[dfWide$Treatment == "IG"], dfWide$DIFF_Q8[dfWide$Treatment == "CG"],
+            paired = FALSE, exact = FALSE, correct = FALSE)
+```
+
+---
+
+# Difference-in-Difference item level analyses
+
+To estimate the causal effect of attending the summer school (IG) relative to a comparison group (CG), I compared pre -> post changes between the two groups at a survey item level (Q1-Q10, Likert 1-5). The coefficient of interest is the interaction term (survey_stage x Treatment), which captures the additional change for IG at post compared to CG at post.
+
+Please note I have only shown the code used for Q8, Q9, and Q5, but the same approach was used to test each  survey item. 
+
+## Model
+For each item Qj, I fit an ordinal logistic regression (MASS::polr) with the formula:
+Qj ~ survey_stage * Treatment
+
+- survey_stage has two levels: Pre (reference), Post.
+- Treatment has two levels: CG (reference), IG.
+- The interaction term survey_stagePost:TreatmentIG quantifies the DiD effect. It is the additional pre–post change in the intervention group over and above the change observed in the comparison group.
+- I report the log‑odds estimate (β), its p‑value, and the odds ratio (exp(β)) with 95% CI.
+
+Ordinal logistic regression assumes **proportional odds**, that is, the effect of the predictors is constant across all thresholds of the ordinal outcome. I do not formally test this assumption here, but treat the proportional odds model as an appropriate approximation for these Likert-type items.
+
+## Assumption of parallel trends
+DiD relies on the assumption that, without the intervention, the outcome for IG and CG would have evolved in parallel. With only two time points (pre and post), I could not test trends statistically over multiple pre-periods, so instead I:
+
+- visually inspected per-item group means (IG vs CG) at pre and post. I looked for similar baselines (pre) and roughly parallel lines from pre to post.
+- ran simple Ordinary Least Squares linear regression model (treating Likert scale as approximately interval) to check directionality. I used this as a supporting check, my primary model is ordinal logistic regression appropriate for Likert outcomes. 
+
+## Q8
+In the original study, Q8 showed a significant treatment effect with a positive interaction coefficient (β = 2.41, 95% CI [1.09, 3.78], p <.001) with an odds ratio of 11.13 (95% CI [2.96, 43.9]). For more information, please see the links to evaluation reports in the 'Overview section'. 
+
+```{r Q8}
+dfDID$survey_stage <- relevel(dfDID$survey_stage, ref = "Pre")
+dfDID$Treatment    <- relevel(dfDID$Treatment,    ref = "CG")
+
+# visual inspection
+plot_data <- dfDID %>%
+  group_by(survey_stage, Treatment) %>%
+  summarise(
+    mean_Q8 = mean(Q8, na.rm = TRUE),
+    se = sd(Q8, na.rm = TRUE)/sqrt(n()),
+    .groups = 'drop'
+  )
+
+# Plot
+ggplot(plot_data, aes(x = survey_stage, y = mean_Q8, group = Treatment, color = Treatment)) +
+  geom_line(aes(linetype = Treatment), linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_Q8 - se, ymax = mean_Q8 + se), width = 0.1) +
+  labs(
+    title = "Q8 Mean Scores Over Time",
+    y = "Mean Q8 Score",
+    x = "Survey Time") +
+  theme_minimal()
+
+# linear regression sense check
+DID_Q8 <- lm(Q8 ~ survey_stage * Treatment, data = dfDID)
+summary(DID_Q8)
+
+# ordinal regression 
+dfDID$Q8_ord <- factor(dfDID$Q8, levels = c(1, 2, 3, 4, 5), ordered = TRUE)
+
+model_Q8_ord <- polr(Q8_ord ~ survey_stage * Treatment, data = dfDID, Hess = TRUE)
+
+# Summary
+summary(model_Q8_ord)
+
+# Get p-values
+ctable <- coef(summary(model_Q8_ord))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = p)
+ctable
+
+#odds ratios
+term <- "survey_stagePost:TreatmentIG"           
+beta <- coef(model_Q8_ord)[term]                  
+OR   <- exp(beta)                                 
+
+# 95% CI for the coefficient
+ci_log <- suppressMessages(confint(model_Q8_ord)) 
+OR_lo  <- exp(ci_log[term, 1])
+OR_hi  <- exp(ci_log[term, 2])
+
+# summary
+cat(sprintf("Q8 (ordinal DiD): beta = %.3f; OR = %.2f (95%% CI: %.2f, %.2f); p = %.3g\n",
+            beta, OR, OR_lo, OR_hi, ctable[term, "p value"]))
+```
+
+---
+
+## Q9
+In the original study, Q9 saw a significant treatment effect with a positive interaction coefficient (β = 1.56, 95% CI [.28, 2.86], p = .002) with an odds ratio of 4.76 (95% CI [1.32, 17.53]). For more information, please see the links to evaluation reports in the 'Overview section'.
+
+```{r Q9}
+# visual inspection
+plot_data <- dfDID %>%
+  group_by(survey_stage, Treatment) %>%
+  summarise(
+    mean_Q9 = mean(Q9, na.rm = TRUE),
+    se = sd(Q9, na.rm = TRUE)/sqrt(n()),
+    .groups = 'drop'
+  )
+
+# Plot
+ggplot(plot_data, aes(x = survey_stage, y = mean_Q9, group = Treatment, color = Treatment)) +
+  geom_line(aes(linetype = Treatment), linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_Q9 - se, ymax = mean_Q9 + se), width = 0.1) +
+  labs(
+    title = "Q9 Mean Scores Over Time",
+    y = "Mean Q9 Score",
+    x = "Survey Time") +
+  theme_minimal()
+
+# linear regression sense check
+DID_Q9 <- lm(Q9 ~ survey_stage * Treatment, data = dfDID)
+summary(DID_Q9)
+
+# ordinal regression 
+dfDID$Q9_ord <- factor(dfDID$Q9, levels = c(1, 2, 3, 4, 5), ordered = TRUE)
+
+model_Q9_ord <- polr(Q9_ord ~ survey_stage * Treatment, data = dfDID, Hess = TRUE)
+
+# Summary
+summary(model_Q9_ord)
+
+# Get p-values
+ctable <- coef(summary(model_Q9_ord))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = p)
+ctable
+
+#odds ratios
+term <- "survey_stagePost:TreatmentIG"           
+beta <- coef(model_Q9_ord)[term]                  
+OR   <- exp(beta)                                 
+
+# 95% CI for the coefficient
+ci_log <- suppressMessages(confint(model_Q9_ord)) 
+OR_lo  <- exp(ci_log[term, 1])
+OR_hi  <- exp(ci_log[term, 2])
+
+# summary
+cat(sprintf("Q9 (ordinal DiD): beta = %.3f; OR = %.2f (95%% CI: %.2f, %.2f); p = %.3g\n",
+            beta, OR, OR_lo, OR_hi, ctable[term, "p value"]))
+```
+
+---
+
+## Q5 near‑significant
+In the original study, Q5 showed a relatively large positive treatment effect that was close to significance and was reported as an item of interest (β = 1.33, 95% CI [-.08, 2.76], p = .065, OR = 3.79 (95% CI [0.93, 15.87]). For more information, please see the links to evaluation reports in the 'Overview section'.
+
+```{r Q5}
+# visual inspection
+plot_data <- dfDID %>%
+  group_by(survey_stage, Treatment) %>%
+  summarise(
+    mean_Q5 = mean(Q5, na.rm = TRUE),
+    se = sd(Q5, na.rm = TRUE)/sqrt(n()),
+    .groups = 'drop'
+  )
+
+# Plot
+ggplot(plot_data, aes(x = survey_stage, y = mean_Q5, group = Treatment, color = Treatment)) +
+  geom_line(aes(linetype = Treatment), linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_Q5 - se, ymax = mean_Q5 + se), width = 0.1) +
+  labs(
+    title = "Q5 Mean Scores Over Time",
+    y = "Mean Q5 Score",
+    x = "Survey Time") +
+  theme_minimal()
+
+# linear regression sense check
+DID_Q5 <- lm(Q5 ~ survey_stage * Treatment, data = dfDID)
+summary(DID_Q5)
+
+# ordinal regression 
+dfDID$Q5_ord <- factor(dfDID$Q5, levels = c(1, 2, 3, 4, 5), ordered = TRUE)
+
+model_Q5_ord <- polr(Q5_ord ~ survey_stage * Treatment, data = dfDID, Hess = TRUE)
+
+# Summary
+summary(model_Q5_ord)
+
+# Get p-values
+ctable <- coef(summary(model_Q5_ord))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = p)
+ctable
+
+#odds ratios
+term <- "survey_stagePost:TreatmentIG"           
+beta <- coef(model_Q5_ord)[term]                  
+OR   <- exp(beta)                                 
+
+# 95% CI for the coefficient
+ci_log <- suppressMessages(confint(model_Q5_ord)) 
+OR_lo  <- exp(ci_log[term, 1])
+OR_hi  <- exp(ci_log[term, 2])
+
+# summary
+cat(sprintf("Q5 (ordinal DiD): beta = %.3f; OR = %.2f (95%% CI: %.2f, %.2f); p = %.3g\n",
+            beta, OR, OR_lo, OR_hi, ctable[term, "p value"]))
+```
+
+---
+
+# Reproducibility
+
+```{r session-info}
+sessionInfo()
+```
+
+
+
