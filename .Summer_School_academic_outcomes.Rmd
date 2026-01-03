@@ -1,0 +1,455 @@
+---
+title: "Summer School: Enrollment, continuation, and attainment"
+author: "Bek Rengel"
+date: "2025-11-26"
+output:
+  prettydoc::html_pretty:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: tactile
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# OVERVIEW
+This notebook demonstrates the workflow used to evaluate the impact of the **Access to UWE Bristol Summer School**, as part of UWE's Access and Participation Plan. Specifically this analysis focused on exploring the impact of the Summer School attendance on enrollment at the institution, continuation among those who enrolled, and first year academic attainment. 
+
+> This notebook uses **synthetic data** randomly generated to reproduce **patterns** observed during the analysis rather than original values. This is to comply with GDPR and ethical requirements of this research, ensuring the data contains no personal or identifiable information.
+
+For more information on this study, please see the README documents. To read evaluation reports, please visit [UWE Bristol's Access and Participation Plan Pages.](https://www.uwe.ac.uk/about/values-vision-strategy/equality-diversity-and-inclusivity/policies#a7060a79c-a095-4fac-b16d-bd2e100068a9) You will find reports relating to this evaluation listed under the 'Widening Access and Raising Attainment' section. Please note some reports are forthcoming in early 2026. 
+
+**Copyright notice** © University of the West of England, Bristol (UWE Bristol), November 2025. Original author: Bek Rengel. All rights reserved.
+
+```{r packages}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(rstanarm)
+```
+
+---
+
+# Synthetic data generation
+The original study used a quasi-experimental design comprising two groups:
+
+- Intervention group (IG) who attended the Summer School
+- Comparison group (CG) who did not attend.
+
+The synthetic data reproduces key structural features of the original dataset, where possible, including:
+
+- group sizes
+- enrollment probabilities
+- continuation probabilities
+- average module marks based on original means and standard deviations for each group (pass rate has been fully randomised for simplicity and is not based on original data)
+- one selected contextual covariate used in later modelling to explore the impact of potential confounders.
+
+Academic outcomes included:
+
+- **Enrollment**: whether participants enrolled at the institution where the study took place.
+- **Continuation**: whether enrolled participants continued into the next year of study and is adapted from an institutional measure.
+- **Attainment proxies**: average module mark and average module pass rate for enrolled participants.
+
+One additional synthetic variable was included to demonstrate covariate handling in models:
+
+- **Survey score** (Likert 1-5) for one pre-activity survey question, asking participants about their capacity to manage university-level study.
+
+Please note in the original study, average mark was calculated for each individual enrolled participant. Where an individual undertook a resit, resit marks were taken as final. Any modules that did not have a numeric grade but were instead ungraded pass/fail were excluded from the average mark but were used to calculate each student's module pass rate. Average marks were weighted based on module credit. Pass rate was calculated for each individual enrolled participant, showing the proportion of modules they passed. Where an individual undertook a resit, resit pass/fail was taken. Ungraded pass/fail modules were included in pass rate. 
+
+```{r synthetic-data}
+set.seed(123)
+
+#IG dataset ######################################################
+n_IG <- 22
+enrol_probs_IG <- c("not enrolled" = 0.14, "enrolled" = 0.86) # proportions rounded from original data
+cont_probs_IG <- c("not continued" = 0.05, "continued" = 0.95) # proportions for those who enrolled, rounded from original data
+
+enrollment_IG <- sample(names(enrol_probs_IG), size = n_IG, replace = TRUE, prob = enrol_probs_IG)
+
+continued_IG <- character(n_IG)
+for (i in seq_len(n_IG)) {
+  if (enrollment_IG[i] == "enrolled") {
+    continued_IG[i] <- sample(names(cont_probs_IG),
+                              size = 1,
+                              replace = TRUE,
+                              prob = cont_probs_IG)
+  } else {
+    continued_IG[i] <- "not enrolled"
+  } 
+}
+
+likert_mean_IG <- 3.55 #mean survey score from original study
+likert_sd_IG <- 0.9 #standard deviation for survey score from original study
+
+IG_df <- data.frame(
+  study_id = paste0("IG", seq_len(n_IG)),
+  study_group = "IG",
+  enrollment = enrollment_IG,
+  continued = continued_IG,
+  stringsAsFactors = FALSE) %>%
+  mutate(
+    avg_mark = if_else(enrollment == "enrolled", round(rnorm(n(), mean = 57.2, sd = 14.9), 1), NA_real_),
+    avg_pass_rate = if_else(enrollment == "enrolled", round(runif(n(), min = 0, max = 100), 1), NA_real_),
+    survey_score = rnorm(n(), mean = likert_mean_IG, sd = likert_sd_IG),
+    survey_score = pmin(pmax(round(survey_score), 1), 5)
+  )
+
+head(IG_df, 10)
+str(IG_df)
+
+#CG dataset ########################################################
+n_CG <- 50
+enrol_probs_CG <- c("not enrolled" = 0.40, "enrolled" = 0.60) # proportions rounded from original data
+cont_probs_CG <- c("not continued" = 0.133, "continued" = 0.867) # proportions for those who enrolled, rounded from original data
+
+enrollment_CG <- sample(names(enrol_probs_CG), size = n_CG, replace = TRUE, prob = enrol_probs_CG)
+
+continued_CG <- character(n_CG)
+for (i in seq_len(n_CG)) {
+  if (enrollment_CG[i] == "enrolled") {
+    continued_CG[i] <- sample(names(cont_probs_CG),
+                              size = 1,
+                              replace = TRUE,
+                              prob = cont_probs_CG)
+  } else {  
+    continued_CG[i] <- "not enrolled"
+  }
+}
+
+likert_mean_CG <- 4.10 # mean survey score from original data
+likert_sd_CG <- 0.8 #sd survey score from original data
+
+CG_df <- data.frame(
+  study_id = paste0("CG", seq_len(n_CG)),
+  study_group = "CG",
+  enrollment = enrollment_CG,
+  continued = continued_CG,
+  stringsAsFactors = FALSE) %>%
+  mutate(
+    avg_mark = if_else(enrollment == "enrolled", round(rnorm(n(), mean = 60.1, sd = 17.1), 1), NA_real_),
+    avg_pass_rate = if_else(enrollment == "enrolled", round(runif(n(), min = 0, max = 100), 1), NA_real_),
+    survey_score = rnorm(n(), mean = likert_mean_CG, sd = likert_sd_CG),
+    survey_score = pmin(pmax(round(survey_score), 1), 5)
+  )
+head(CG_df, 10)
+str(CG_df)
+
+#combined dataset #################################################################
+combined_df <- CG_df %>%
+  bind_rows(IG_df)
+head(combined_df, 10)
+str(combined_df)
+```
+
+---
+
+# Descriptive statistics
+Descriptive statistics are presented to contextualise group differences prior to modelling. These summaries are intended as sense checks rather than inferential results, and values are synthetic and illustrative only.
+
+In the original study, IG participants enrolled and continued with their studies at a higher proportion than CG, and there was very little difference between the groups in average mark and pass rate. 
+
+To see actual results from the study, please visit the link to the evaluation reports in the 'Overview' section.
+
+```{r descriptives}
+descriptives <- list(
+  Enrollment = combined_df %>%
+    group_by(study_group, enrollment) %>%
+    summarise(n_enrolled = n()) %>%
+    mutate(perc_enrolled = round(n_enrolled/ sum(n_enrolled) *100, 1)),
+  Continuation = combined_df %>%
+    group_by(study_group, continued) %>%
+    filter(continued != "not enrolled") %>%
+    summarise(n_continued = n()) %>%
+    mutate(perc_continued = round(n_continued/ sum(n_continued) *100, 1)),
+  AvgMark = combined_df %>%
+    group_by(study_group) %>%
+    summarise(mean_avg_mark = mean(avg_mark, na.rm = TRUE),
+              sd_avg_mark = sd(avg_mark, na.rm = TRUE)),
+  AvgPassRate = combined_df %>%
+    group_by(study_group) %>%
+    summarise(mean_pass_rate = mean(avg_pass_rate, na.rm = TRUE), 
+              sd_pass_rate = sd(avg_pass_rate, na.rm = TRUE))
+)
+descriptives
+```
+
+```{r enrol-cont-chart}
+enrol_cont <- bind_rows(
+  descriptives$Enrollment %>%
+    mutate(metric = "Enrollment", option = enrollment, value = perc_enrolled) %>%
+    select(study_group, metric, option, value),
+  descriptives$Continuation %>%
+    mutate(metric = "Continuation", option = continued, value = perc_continued) %>%
+    select(study_group, metric, option, value)) %>%
+  filter(option == "enrolled" | option == "continued") %>%
+  ggplot(aes(x = study_group, y = value, fill = study_group)) +
+  geom_col(position = "dodge")+
+  labs(title = "Comparing the enrollment and continuation rates of Summer School attendees\n(intervention group) and non-attendees (comparison group)",
+       fill = "Group") +
+  scale_y_continuous(n.breaks = 10) +
+  scale_x_discrete(name = NULL,
+                   labels = c("Comparison group", "Intervention group")) +
+  scale_fill_manual(labels = c("Comparison group", "Intervention group"),
+                    values = c("CG" = "#FDC300",
+                               "IG" = "#1AB7C9")) +
+  facet_grid(col = vars(metric)) + 
+  theme(legend.position = "none",
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(colour = "grey85"),
+        panel.grid.minor = element_line(colour = "grey85"))
+enrol_cont
+```
+
+```{r descriptives-academic}
+marks_pass_rate <- bind_rows(
+    descriptives$AvgPassRate %>%
+      mutate(metric = "Mean Average Pass Rate", value = mean_pass_rate) %>%
+      select(study_group, metric, value),
+    descriptives$AvgMark %>%
+      mutate(metric = "Mean Average Mark", value = mean_avg_mark) %>%
+      select(study_group, metric, value)) %>%
+  filter(!is.na(metric)) %>%
+  ggplot(aes(x = study_group, y = value, fill = study_group)) +
+  geom_col(position = "dodge") +
+  labs(title = "Comparing module attainment after first year of study\nfor Summer School attendees (intervention group) and non-attendees (comparison group)",
+       fill = "Group",
+       ylab = "Percentage") +
+  scale_y_continuous(name = "Percentage",
+                     n.breaks = 10) +
+  scale_x_discrete(name = NULL,
+                   labels = c("Comparison group", "Intervention group")) +
+  scale_fill_manual(labels = c("Comparison group", "Intervention group"),
+                    values = c("CG" = "#FDC300",
+                               "IG" = "#1AB7C9")) +
+  facet_grid(col = vars(metric)) +
+  theme(legend.position = "none",
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(colour = "grey85"),
+        panel.grid.minor = element_line(colour = "grey85"))
+marks_pass_rate
+```
+
+---
+
+# Statistical analysis: Evaluation of key academic outcomes
+Statistical analysis of academic outcomes focused on the following evaluation questions:
+
+- **EQ1**: Did attendance at the Summer School increase the likelihood of enrolling at the university of study?
+- **EQ2**: Did Summer School attendees perform better academically than non-attendees?
+- **EQ3**: Did attendance at the Summer School increase the likelihood of continuing into second year?
+
+A range of different tests were used, appropriate to the original data, and are outlined in the sections below. 
+
+---
+
+## EQ1: Summer School attendance and enrollment
+Several analysis techniques were used to explore relationships between Summer School attendance and enrollment at the institution of study. These were:
+
+- Fisher's exact test to measure association between study group and enrollment. Chosen for its suitability for small sample sizes and non-normally distributed categorical variables.
+- Frequentist logistic regression to explore relationships between enrollment and study group.
+- Bayesian logistic regression to validate findings from frequentist analysis. Employed due to better handling of small sample sizes compared to frequentist methods.
+
+The original study found that IG were more likely to enroll at the university of study than CG with odds ratios ranging from 4-6. 
+
+Please note, results below are based on synthetic data and are unlikely to match the original study.
+
+### Fisher's exact test
+Fisher's exact test explored association in a 2 x 2 table, with IG set as row 1 and 'enrolled' set as column 1 to ensure that the test explored the odds of IG enrolling compared to CG.
+
+```{r fishers-enrollment}
+fishers_data_enroll <- combined_df %>%
+  mutate(
+    study_group = factor(study_group, levels = c("IG", "CG")),
+    enrollment = factor(enrollment, levels = c("enrolled", "not enrolled"))
+  ) %>%
+  select(study_group, enrollment)
+fishers_data_enroll <- table(fishers_data_enroll$study_group,fishers_data_enroll$enrollment)
+fishers_data_enroll
+    
+fishers_test_enroll <- fisher.test(fishers_data_enroll)
+fishers_test_enroll
+```
+
+### Simple logistic regression
+A simple logistic regression model was fitted to the data using both frequentist and Bayesian approaches, to explore the relationships between group members and enrollment. 
+
+Logistic regression estimated log-odds difference, with exponentiated coefficient giving an odds ratio showing the odds that IG would enroll compared to CG. 95% confidence intervals were calculated using Wald intervals based on the estimated standard error
+
+Please note, results below are based on synthetic data and are unlikely to match results in the original study. 
+
+```{r frequentist-simple}
+combined_df_log <- combined_df %>%
+  mutate(
+    enrollment = if_else(enrollment == "enrolled", 1L, 0L),
+    study_group_fact = factor(study_group, levels = c("IG", "CG")))
+combined_df_log$study_group_fact <- relevel(combined_df_log$study_group_fact, ref = "CG") #Set CG as the reference so that coefficient is interpreted as IG vs CG. 
+str(combined_df_log)
+
+fmodel_enrollment <- glm(enrollment ~ study_group_fact, data = combined_df_log, family = binomial)
+summary(fmodel_enrollment)
+
+#odds ratio for IG vs CG
+beta_fmodel_simple <- coef(fmodel_enrollment)["study_group_factIG"]
+OR_fmodel_simple <- exp(beta_fmodel_simple)
+OR_fmodel_simple
+
+se_fmodel_simple <- sqrt(vcov(fmodel_enrollment)["study_group_factIG", "study_group_factIG"])
+CI_OR_fmodel_simple <- exp(beta_fmodel_simple + c(-1, 1) * 1.96 * se_fmodel_simple)
+CI_OR_fmodel_simple
+```
+
+A simple Bayesian logistic regression model was fitted as a robustness check alongside the frequentist analysis. This approach was chosen due to the relatively small sample size and quasi-experimental design, where maximum-likelihood estimates can be unstable.
+
+This model used the following:
+
+- Weakly informative priors were used for all regression parameters to help stabilise small samples without imposing strong assumptions. These priors assume that effects are most likely to be close to zero, while still allowing a wide range of plausible values if supported by the data.
+- Weakly informative intercept prior was used to reflect uncertainty about baseline enrollment rate, while avoiding implausible extremes.
+- MCMC sampling was used, with four chains run each with 2000 iterations. Convergence was assessed using standard diagnostics to ensure that posterior estimates were stable.
+
+Odds ratios, posterior means, and 95% credible intervals were reported, with the direction of the effect described using the proportion of posterior draws.
+
+The example below is illustrative only and will differ from the results of the original study. 
+
+```{r bayes-simple}
+bmodel_enrollment <- stan_glm(enrollment ~ study_group_fact, 
+                              data = combined_df_log,
+                              family = binomial(link = "logit"),
+                              prior = normal(location = 0, scale = 2.5, autoscale = FALSE),
+                              prior_intercept = normal(location = 0, scale = 2.5, autoscale = FALSE),
+                              chains = 4, iter = 2000, seed = 123, refresh = 0)
+print(summary(bmodel_enrollment), digits = 4)
+
+#odds ratio for IG vs CG
+post_bmodel_simple <- as.matrix(bmodel_enrollment)
+beta_IG_bmodel_simple <- post_bmodel_simple[,"study_group_factIG"]
+OR_bmodel_simple <- exp(beta_IG_bmodel_simple)
+OR_simple_summary <- c(
+  mean = mean(OR_bmodel_simple),
+  median = median(OR_bmodel_simple),
+  quantile(OR_bmodel_simple, c(`2.5%` = 0.025, `97.5%` = 0.975))
+)
+OR_simple_summary
+
+pd_negative_simple <- mean(beta_IG_bmodel_simple < 0)
+pd_positive_simple <- mean(beta_IG_bmodel_simple > 0)
+pd_negative_simple;pd_positive_simple
+
+#convergence checks
+diag_simple <- summary(bmodel_enrollment)[, c("Rhat", "n_eff", "mcse")]
+diag_simple
+plot(bmodel_enrollment, "trace")
+```
+
+### Adjusted models
+The simple models used above were adjusted with survey score as a covariate to explore the relationship between enrollment and Summer School attendance, while controlling for baseline survey differences. The survey question encoded in the ```survey_score``` variable asked participants to rate their capacity to manage university level study. Analysis found that IG had a statistically significantly lower score for this question at baseline compared to CG, and it thus may have a potential confounding effect. For full details on this analysis, see the information outlined in the 'Overview' section above.
+
+Additional models to those presented below were tested, including taking demographic characteristics and further baseline survey results as additional covariates. These were not retained for reporting due to limited sample size and minimal impact on the estimated association between Summer School attendance and enrollment. They are omitted here for clarity.
+
+Models outlined below are for illustrative purposes only and do not reflect the findings from the original study.
+
+```{r frequentist-adjusted}
+fmodel_enrollment_survey <- glm(enrollment ~ study_group_fact + survey_score, data = combined_df_log, family = binomial)
+summary(fmodel_enrollment_survey)
+
+#odds ratio for IG vs CG
+beta_fmodel_adjusted <- coef(fmodel_enrollment_survey)["study_group_factIG"]
+OR_fmodel_adjusted <- exp(beta_fmodel_adjusted)
+OR_fmodel_adjusted
+
+se_fmodel_adjusted <- sqrt(vcov(fmodel_enrollment_survey)["study_group_factIG", "study_group_factIG"])
+CI_OR_fmodel_adjusted <- exp(beta_fmodel_adjusted + c(-1, 1) * 1.96 * se_fmodel_adjusted)
+CI_OR_fmodel_adjusted
+```
+
+The adjusted Bayesian model outlined below used weakly informative priors for both the regression coefficients and the intercept, reflecting uncertainty about the magnitude and direction of the effects, as well as baseline enrollment probability. 
+
+```{r bayesian-additional}
+bmodel_enrollment_survey <- stan_glm(enrollment ~ study_group_fact + survey_score,
+                                     data = combined_df_log,
+                                     family = binomial(link = "logit"),
+                                    prior = normal(location = 0, scale = 2.5, autoscale = FALSE),
+                                    prior_intercept = normal(location = 0, scale = 2.5, autoscale = FALSE),
+                                    chains = 4, iter = 2000, seed = 123, refresh = 0)
+print(summary(bmodel_enrollment_survey), digits = 4)
+
+#odds ratio for IG vs CG
+post_bmodel_adjusted <- as.matrix(bmodel_enrollment_survey)
+beta_IG_bmodel_adjusted <- post_bmodel_adjusted[,"study_group_factIG"]
+OR_bmodel_adjusted <- exp(beta_IG_bmodel_adjusted)
+OR_adjusted_summary <- c(
+  mean = mean(OR_bmodel_adjusted),
+  median = median(OR_bmodel_adjusted),
+  quantile(OR_bmodel_adjusted, c(`2.5%` = 0.025, `97.5%` = 0.975))
+)
+OR_adjusted_summary
+
+pd_negative_adjusted <- mean(beta_IG_bmodel_adjusted < 0)
+pd_positive_adjusted <- mean(beta_IG_bmodel_adjusted > 0)
+pd_negative_adjusted;pd_positive_adjusted
+
+#convergence checks
+diag_adjusted <- summary(bmodel_enrollment_survey)[, c("Rhat", "n_eff", "mcse")]
+diag_adjusted
+plot(bmodel_enrollment_survey, "trace")
+```
+
+## EQ2: Summer School attendance and attainment
+Tests were run to determine if there was any significant association between Summer School attendance and academic attainment. These tests are restricted to participants who enrolled at the institution of study. 
+
+The following tests were run in addition to descriptive analysis findings observed above:
+
+- Shapiro-Wilks test for normality. In the original study, average mark was normally distributed and pass rate was not, affecting which tests where subsequently used. This notebook follows the original study's workflow, which may not match the synthetically generated data used here. 
+- T-test to explore compare IG and CG means for average mark. In the original study, no significant difference was found.
+- Mann-Whitney U test to compare distribution of IG and CG average pass rates. In the original study, no significant difference was found. 
+
+```{r average-mark}
+avg_mark <- combined_df %>%
+  filter(!is.na(avg_mark))
+
+shapiro.test(avg_mark$avg_mark)
+
+ttest_avg_mark <- t.test(avg_mark ~ study_group, data = avg_mark, var.equal = FALSE)
+ttest_avg_mark
+```
+
+```{r pass-rate}
+pass_rate <- combined_df %>%
+  filter(!is.na(avg_pass_rate))
+
+shapiro.test(pass_rate$avg_pass_rate)
+
+mann_whit_pass_rate <- wilcox.test(avg_pass_rate ~ study_group, data = pass_rate)
+mann_whit_pass_rate
+```
+
+## EQ3: Summer School attendance and continuation
+Fisher's exact test was run to explore association in a 2 x 2 table, with IG set as row 1 and 'continued' set as column 1 to ensure that the test explored the odds of IG continuing compared to CG. These tests are restricted to participants who enrolled at the institution of study. 
+
+In the original study, descriptive analysis showed a higher continuation rate for IG compared to CG, but Fisher's exact test showed this was not a statistically significant result and no further tests were run. 
+
+Results below will be based on the synthetic data used in this notebook and will likely differ from the results of the original study. 
+
+```{r continuation}
+fishers_data_continuation <- combined_df %>%
+  filter(continued != "not enrolled") %>%
+  mutate(
+    study_group = factor(study_group, levels = c("IG", "CG")),
+    continued = factor(continued, levels = c("continued", "not continued"))
+  ) %>%
+  select(study_group, continued)
+fishers_data_continuation <- table(fishers_data_continuation$study_group,fishers_data_continuation$continued)
+fishers_data_continuation
+
+fishers_test_continuation <- fisher.test(fishers_data_continuation)
+fishers_test_continuation
+```
+
+---
+
+# Reproducibility
+```{r session-info}
+sessionInfo()
+```
