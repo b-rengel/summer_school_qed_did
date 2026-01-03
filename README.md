@@ -1,6 +1,6 @@
-**To view this analysis in full, please visit**
-- View phase 1: survey-based evaluation: https://b-rengel.github.io/summer_school_qed_did/survey/
-- View phase 2: evaluation of academic outcomes: https://b-rengel.github.io/summer_school_qed_did/outcomes/
+**To view this analysis in full, please visit the following links**
+- Phase 1: survey-based evaluation: https://b-rengel.github.io/summer_school_qed_did/survey/
+- Phase 2: evaluation of academic outcomes: https://b-rengel.github.io/summer_school_qed_did/outcomes/
 
  # Summer School Evaluation (Synthetic Example)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-This repository contains worked examples of the quantitative analysis workflow used to evaluate the **Access to UWE Bristol Summer School**, delivered as part of UWE Bristol’s Access and Participation Plan.
+This repository contains worked examples of the quantitative analysis workflow used to evaluate the **Access to UWE Bristol Summer School**, delivered as part of <a href="https://www.uwe.ac.uk/about/values-vision-strategy/equality-diversity-and-inclusivity/policies#a7060a79c-a095-4fac-b16d-bd2e100068a9">UWE Bristol’s Access and Participation Plan.</a>
 
 The original evaluation used sensitive student data (survey responses and administrative outcomes) that cannot be shared. To comply with GDPR and ethical requirements, this repository uses **synthetic data** that are randomly generated to:
 
@@ -110,4 +110,5 @@ Synthetic data are generated within the notebooks, so no external data files are
 
 © University of the West of England, Bristol (UWE Bristol), 2025.
 Original author: Bek Rengel. All rights reserved.
+
 
