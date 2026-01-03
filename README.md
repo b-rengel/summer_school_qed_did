@@ -1,4 +1,6 @@
-**To view this analysis in full, please visit: https://b-rengel.github.io/summer_school_qed_did/**
+**To view this analysis in full, please visit**
+- View phase 1: survey-based evaluation: https://b-rengel.github.io/summer_school_qed_did/survey/
+- View phase 2: evaluation of academic outcomes: https://b-rengel.github.io/summer_school_qed_did/outcomes/
 
  # Summer School Evaluation (Synthetic Example)
 
@@ -47,13 +49,13 @@ Items Q1–Q6 are drawn from validated TASO Access and Success scales. Items Q7�
 
 ---
 
-### Phase 2 — Enrolment, continuation, and attainment outcomes
+### Phase 2 — enrollment, continuation, and attainment outcomes
 
 - **R Markdown source:** `summer_school_academic_outcomes.Rmd`  
 - **Rendered HTML:** https://b-rengel.github.io/summer_school_qed_did/outcomes/
 
 **Outcomes**
-- **Enrolment** at the institution of study
+- **enrollment** at the institution of study
 - **Continuation** into the following academic year (among enrolled participants)
 - **Module attainment** for enrolled participants (average mark, average pass rate)
 
@@ -108,3 +110,4 @@ Synthetic data are generated within the notebooks, so no external data files are
 
 © University of the West of England, Bristol (UWE Bristol), 2025.
 Original author: Bek Rengel. All rights reserved.
+
