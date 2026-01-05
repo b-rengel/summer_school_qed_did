@@ -55,7 +55,7 @@ Academic outcomes included:
 
 One additional synthetic variable was included to demonstrate covariate handling in models:
 
-- **Survey score** (Likert 1-5) for one pre-activity survey question, asking participants about their capacity to manage university-level study.
+- **Survey score** (Likert 1-5) for one pre-activity survey question, asking participants about their confidence to achieve the grades required to progress to university.
 
 Please note in the original study, average mark was calculated for each individual enrolled participant. Where an individual undertook a resit, resit marks were taken as final. Any modules that did not have a numeric grade but were instead ungraded pass/fail were excluded from the average mark but were used to calculate each student's module pass rate. Average marks were weighted based on module credit. Pass rate was calculated for each individual enrolled participant, showing the proportion of modules they passed. Where an individual undertook a resit, resit pass/fail was taken. Ungraded pass/fail modules were included in pass rate. 
 
@@ -252,7 +252,7 @@ Several analysis techniques were used to explore relationships between Summer Sc
 - Frequentist logistic regression to explore relationships between enrollment and study group.
 - Bayesian logistic regression to validate findings from frequentist analysis. Employed due to better handling of small sample sizes compared to frequentist methods.
 
-The original study found that IG were more likely to enroll at the university of study than CG with odds ratios ranging from 4-6. 
+The original study found that IG were more likely to enroll at the university of study than CG with odds ratios ranging from 6-8. 
 
 Please note, results below are based on synthetic data and are unlikely to match the original study.
 
@@ -344,7 +344,7 @@ plot(bmodel_enrollment, "trace")
 ```
 
 ### Adjusted models
-The simple models used above were adjusted with survey score as a covariate to explore the relationship between enrollment and Summer School attendance, while controlling for baseline survey differences. The survey question encoded in the ```survey_score``` variable asked participants to rate their capacity to manage university level study. Analysis found that IG had a statistically significantly lower score for this question at baseline compared to CG, and it thus may have a potential confounding effect. For full details on this analysis, see the information outlined in the 'Overview' section above.
+The simple models used above were adjusted with survey score as a covariate to explore the relationship between enrollment and Summer School attendance, while controlling for baseline survey differences. The survey question encoded in the ```survey_score``` variable asked participants to rate their confidence that they would achieve the necessary grades to progress to university, which may directly affect enrollment. Analysis found that IG had a statistically significantly higher score for this question at baseline compared to CG, and it thus may have a potential confounding effect. For full details on this analysis, see the information outlined in the 'Overview' section above.
 
 Additional models to those presented below were tested, including taking demographic characteristics and further baseline survey results as additional covariates. These were not retained for reporting due to limited sample size and minimal impact on the estimated association between Summer School attendance and enrollment. They are omitted here for clarity.
 
@@ -453,3 +453,4 @@ fishers_test_continuation
 ```{r session-info}
 sessionInfo()
 ```
+
